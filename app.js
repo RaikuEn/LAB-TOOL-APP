@@ -10,7 +10,7 @@ app.use(express.json()); // Essential for reading data!
 app.use(cors()); // This allows the frontend to access the API
 
 // ... (Your connection code from before stays here) ...
-const dbURI = "mongodb+srv://Raikuen:RT03RW15@learn0.5zhk8.mongodb.net/lab_db?retryWrites=true&w=majority&appName=Learn0 ";
+const dbURI = "mongodb://localhost:27017/";
 mongoose.connect(dbURI).then(() => console.log('✅ Connected!'));
 
 // NEW: Route to add a tool
