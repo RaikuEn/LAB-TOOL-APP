@@ -1,0 +1,21 @@
+25/2/2026 ver 0.2
+
+added:
+login page and authorization
+
+need to +:
+history button
+add tools button or page or pop up
+log out button
+dashboard to track borrowed items
+
+26/2/2026 ver 0.3
+
+added:
+log out button
+history button and history view
+add tools button or page or pop up
+
+trouble:
+1. white screen because forgot to declare the showhistory.
+2. token is not read by the return patch.

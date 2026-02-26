@@ -2,6 +2,29 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Tool = require('./models/tool'); // Import your new Model
 const Log = require('./models/Log');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const User = require('./models/User');
+
+// The Security Guard (Middleware)
+const verifyToken = (req, res, next) => {
+  // Get the token from the "Authorization" header
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Format: "Bearer <token>"
+
+  if (!token) {
+    return res.status(401).send("Access Denied: No Token Provided!");
+  }
+
+  try {
+    const verified = jwt.verify(token, 'SECRET_KEY'); // Use the same key from your Login route
+    req.user = verified; 
+    next(); // Pass the request to the next function (the actual route)
+  } catch (err) {
+    res.status(403).send("Invalid or Expired Token");
+  }
+};
+
 const cors = require('cors');
 
 const app = express();
@@ -13,16 +36,62 @@ app.use(cors()); // This allows the frontend to access the API
 const dbURI = "mongodb://localhost:27017/";
 mongoose.connect(dbURI).then(() => console.log('✅ Connected!'));
 
-// NEW: Route to add a tool
-app.post('/add-tool', async (req, res) => {
+app.post('/register', async (req, res) => {
   try {
-    const newTool = new Tool(req.body);
-    await newTool.save();
-    res.status(201).send("Tool saved successfully!");
+    const { username, password } = req.body;
+
+    // 1. Check if user already exists
+    const userExists = await User.findOne({ username });
+    if (userExists) return res.status(400).send("User already exists");
+
+    // 2. Hash the password (10 rounds of "salt" for security)
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // 3. Create and save the user
+    const newUser = new User({
+      username,
+      password: hashedPassword
+    });
+
+    await newUser.save();
+    res.status(201).send("Admin account created successfully!");
   } catch (err) {
-    res.status(400).send("Error saving tool: " + err.message);
+    res.status(500).send("Error: " + err.message);
   }
 });
+
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  const user = await User.findOne({ username });
+  if (!user) return res.status(400).send("User not found");
+
+  const isMatch = await bcrypt.compare(password, user.password);
+  if (!isMatch) return res.status(400).send("Invalid password");
+
+  const token = jwt.sign({ id: user._id }, 'SECRET_KEY', { expiresIn: '1h' });
+  res.json({ token, username });
+});
+
+// NEW: Route to add a tool
+app.post('/add-tool', verifyToken, async (req, res) => {
+  try {
+    const { name, category } = req.body;
+    const newTool = new Tool({ name, category });
+    await newTool.save();
+    
+    // Log the addition
+    await Log.create({
+      toolName: name,
+      borrowerName: "Admin",
+      action: "Added to Inventory"
+    });
+
+    res.status(201).json(newTool);
+  } catch (err) {
+    res.status(400).send("Error adding tool: " + err.message);
+  }
+});
+
 
 // Search tools by name or category
 app.get('/search', async (req, res) => {
@@ -43,7 +112,7 @@ app.get('/tools', async (req, res) => {
 });
 
 // Route to Borrow a Tool
-app.patch('/borrow/:id', async (req, res) => {
+app.patch('/borrow/:id', verifyToken, async (req, res) => {
   try {
     const toolId = req.params.id;
     const borrower = req.body.borrowerName;
@@ -70,7 +139,7 @@ app.patch('/borrow/:id', async (req, res) => {
 });
 
 // Route to Return a Tool
-app.patch('/return/:id', async (req, res) => {
+app.patch('/return/:id', verifyToken, async (req, res) => {
   try {
     // 1. Find the tool first to get its name for the log
     const tool = await Tool.findById(req.params.id);
@@ -96,10 +165,29 @@ app.patch('/return/:id', async (req, res) => {
     res.status(500).send("Server Error");
   }
 });
+// Route to Permanently Delete a Tool
+app.delete('/delete-tool/:id', verifyToken, async (req, res) => {
+  try {
+    const deletedTool = await Tool.findByIdAndDelete(req.params.id);
+    
+    if (!deletedTool) return res.status(404).send("Tool not found");
+
+    // Optional: Log the deletion
+    await Log.create({
+      toolName: deletedTool.name,
+      borrowerName: "Admin",
+      action: "Permanently Removed"
+    });
+
+    res.send(`Successfully deleted ${deletedTool.name}`);
+  } catch (err) {
+    res.status(500).send("Error deleting tool: " + err.message);
+  }
+});
 
 
 // Route to see every single lending action ever made
-app.get('/history', async (req, res) => {
+app.get('/history', verifyToken, async (req, res) => {
   try {
     // .sort({ date: -1 }) puts the newest logs at the top
     const history = await Log.find().sort({ date: -1 });
