@@ -25,6 +25,14 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+const isAdmin = (req, res, next) => {
+  if (req.user && req.user.role === 'admin') {
+    next(); // Access granted
+  } else {
+    res.status(403).send("Access Denied: Admin Privileges Required");
+  }
+};
+
 const cors = require('cors');
 
 const app = express();
@@ -60,6 +68,34 @@ app.post('/register', async (req, res) => {
   }
 });
 
+// Get list of all users (Admin Only)
+app.get('/admin/users', verifyToken, isAdmin, async (req, res) => {
+  try {
+    // .select('-password') ensures we don't send encrypted passwords to the frontend
+    const users = await User.find().select('-password');
+    res.json(users);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+
+app.post('/admin/create-user', verifyToken, isAdmin, async (req, res) => {
+  const { username, password, role } = req.body;
+  const hashedPassword = await bcrypt.hash(password, 10);
+  const newUser = new User({ username, password: hashedPassword, role });
+  await newUser.save();
+  res.send(`User ${username} created as ${role}`);
+});
+
+// Admin deletes a user
+app.delete('/admin/delete-user/:id', verifyToken, isAdmin, async (req, res) => {
+  await User.findByIdAndDelete(req.params.id);
+  res.send("User removed");
+});
+
+
+
 app.post('/login', async (req, res) => {
   const { username, password } = req.body;
   const user = await User.findOne({ username });
@@ -68,12 +104,12 @@ app.post('/login', async (req, res) => {
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) return res.status(400).send("Invalid password");
 
-  const token = jwt.sign({ id: user._id }, 'SECRET_KEY', { expiresIn: '1h' });
-  res.json({ token, username });
+  const token = jwt.sign({ id: user._id, role: user.role }, 'SECRET_KEY', { expiresIn: '30m' });
+  res.json({ token, username : user.username, role : user.role });
 });
 
 // NEW: Route to add a tool
-app.post('/add-tool', verifyToken, async (req, res) => {
+app.post('/add-tool', verifyToken, isAdmin, async (req, res) => {
   try {
     const { name, category } = req.body;
     const newTool = new Tool({ name, category });
@@ -118,8 +154,8 @@ app.patch('/borrow/:id', verifyToken, async (req, res) => {
     const borrower = req.body.borrowerName;
 
     // Find the tool by its ID and update it
-    const updatedTool = await Tool.findByIdAndUpdate(
-      toolId, 
+    const updatedTool = await Tool.findOneAndUpdate(
+      { _id: req.params.id, isAvailable: true }, 
       { 
         isAvailable: false, 
         borrowerName: borrower,
@@ -139,7 +175,7 @@ app.patch('/borrow/:id', verifyToken, async (req, res) => {
 });
 
 // Route to Return a Tool
-app.patch('/return/:id', verifyToken, async (req, res) => {
+app.patch('/return/:id', verifyToken, isAdmin, async (req, res) => {
   try {
     // 1. Find the tool first to get its name for the log
     const tool = await Tool.findById(req.params.id);
@@ -166,7 +202,7 @@ app.patch('/return/:id', verifyToken, async (req, res) => {
   }
 });
 // Route to Permanently Delete a Tool
-app.delete('/delete-tool/:id', verifyToken, async (req, res) => {
+app.delete('/delete-tool/:id', verifyToken, isAdmin, async (req, res) => {
   try {
     const deletedTool = await Tool.findByIdAndDelete(req.params.id);
     
@@ -187,7 +223,7 @@ app.delete('/delete-tool/:id', verifyToken, async (req, res) => {
 
 
 // Route to see every single lending action ever made
-app.get('/history', verifyToken, async (req, res) => {
+app.get('/history', verifyToken, isAdmin, async (req, res) => {
   try {
     // .sort({ date: -1 }) puts the newest logs at the top
     const history = await Log.find().sort({ date: -1 });

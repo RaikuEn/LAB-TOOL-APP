@@ -9,14 +9,54 @@ function App() {
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [newTool, setNewTool] = useState({ name: '', category: '' });
+  const [userRole, setUserRole] = useState("");
+  const [allUsers, setAllUsers] = useState([]);
+  const [view, setView] = useState("tools"); // "tools" or "users"
+  const [newUser, setNewUser] = useState({ username: '', password: '', role: 'user' });
+
 
   useEffect(() => {
     const token = localStorage.getItem('token');
+    const role = localStorage.getItem('role'); // Read the role
     if (token) {
       setIsLoggedIn(true);
+      setUserRole(role); // Update state so the tab shows up
       fetchTools();
+      const interval = setInterval(fetchTools, 2000); // Refresh every 2 seconds
+      return () => clearInterval(interval); // Cleanup on close
     }
   }, []);
+
+  useEffect(() => {
+    let timeout;
+
+    const resetTimer = () => {
+      if (timeout) clearTimeout(timeout);
+      // Set timer for 30 minutes (30 * 60 * 1000 milliseconds)
+      timeout = setTimeout(() => {
+        handleLogout();
+        alert("Session expired due to inactivity.");
+      }, 1800000); 
+    };
+
+    // Listen for user activity
+    window.addEventListener('mousemove', resetTimer);
+    window.addEventListener('keydown', resetTimer);
+    window.addEventListener('click', resetTimer);
+
+    resetTimer(); // Start timer on mount
+
+    return () => {
+      // Cleanup listeners when component unmounts
+      window.removeEventListener('mousemove', resetTimer);
+      window.removeEventListener('keydown', resetTimer);
+      window.removeEventListener('click', resetTimer);
+      clearTimeout(timeout);
+    };
+
+  }, [isLoggedIn]); // Re-run when login state changes
+
+
 
   const addTool = () => {
     const token = localStorage.getItem('token');
@@ -45,6 +85,31 @@ function App() {
     }
   };
 
+  const createUser = () => {
+    const token = localStorage.getItem('token');
+    if (!newUser.username || !newUser.password) return alert("Fill in all fields!");
+
+    axios.post('http://localhost:3000/admin/create-user', newUser, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    .then(() => {
+      setNewUser({ username: '', password: '', role: 'user' }); // Reset form
+      fetchUsers(); // Refresh the table
+      alert("User created successfully!");
+    })
+    .catch(err => alert("Error: " + err.response.data));
+  };
+
+
+  const fetchUsers = () => {
+    const token = localStorage.getItem('token');
+    axios.get('http://localhost:3000/admin/users', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    .then(res => setAllUsers(res.data))
+    .catch(err => alert("Access Denied"));
+  };
+
   // 1. Load tools from backend
   const fetchTools = () => {
     axios.get('http://localhost:3000/tools')
@@ -56,6 +121,8 @@ function App() {
     axios.post('http://localhost:3000/login', loginData)
       .then(res => {
         localStorage.setItem('token', res.data.token); // Save the JWT
+        localStorage.setItem('role', res.data.role);
+        setUserRole(res.data.role);
         setIsLoggedIn(true);
         fetchTools();
       })
@@ -65,6 +132,7 @@ function App() {
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('username'); 
+    localStorage.removeItem('role'); 
     setIsLoggedIn(false);
     setTools([]); // Clear the tool list from memory for extra security  
     console.log("User logged out successfully");
@@ -175,6 +243,86 @@ function App() {
         </div>
       </section>
 
+      {/* --- Navigation Tabs (Only for Admins) --- */}
+      {userRole === 'admin' && (
+        <nav style={{ marginBottom: '20px' }}>
+          <button onClick={() => setView("tools")}>Manage Tools</button>
+          <button onClick={() => { setView("users"); fetchUsers(); }}>Manage Users</button>
+        </nav>
+      )}
+
+      {view === "users" && (
+        <div>
+          {/* --- Add New User Form --- */}
+          <section style={{ marginBottom: '30px', padding: '20px', border: '1px solid #ddd', borderRadius: '10px' }}>
+            <h3>👤 Create New User</h3>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <input 
+                type="text" placeholder="Username" 
+                value={newUser.username}
+                onChange={e => setNewUser({...newUser, username: e.target.value})}
+                style={{ padding: '8px', flex: 1 }}
+              />
+              <input 
+                type="password" placeholder="Password" 
+                value={newUser.password}
+                onChange={e => setNewUser({...newUser, password: e.target.value})}
+                style={{ padding: '8px', flex: 1 }}
+              />
+              <select 
+                value={newUser.role}
+                onChange={e => setNewUser({...newUser, role: e.target.value})}
+                style={{ padding: '8px' }}
+              >
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button onClick={createUser} style={{ backgroundColor: '#28a745', color: 'white', padding: '8px 15px', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
+                Create User
+              </button>
+            </div>
+          </section>
+
+          {/* --- User Directory Table --- */}
+          <h2>👥 User Directory</h2>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
+            <thead style={{ backgroundColor: '#f4f4f4' }}>
+              <tr>
+                <th style={{ padding: '12px', textAlign: 'left' }}>Username</th>
+                <th>Role</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allUsers.map(u => (
+                <tr key={u._id} style={{ borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '12px' }}>{u.username}</td>
+                  <td>
+                    <span style={{ 
+                      padding: '4px 10px', 
+                      borderRadius: '15px', 
+                      fontSize: '12px',
+                      backgroundColor: u.role === 'admin' ? '#fff3cd' : '#d1ecf1',
+                      color: u.role === 'admin' ? '#856404' : '#0c5460'
+                    }}>
+                      {u.role.toUpperCase()}
+                    </span>
+                  </td>
+                  <td>
+                    <button 
+                      onClick={() => deleteUser(u._id)} 
+                      style={{ color: '#dc3545', border: 'none', background: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* --- Tool Inventory Grid --- */}
       <div style={{ display: 'grid', gap: '15px' }}>
         {tools.map(tool => (
@@ -207,7 +355,7 @@ function App() {
                 {tool.isAvailable ? 'Borrow Tool' : 'Return to Lab'}
               </button>
               {/* Add this button inside your tools.map() loop, near your other buttons */}
-              <button 
+              {userRole === 'admin' && (<button 
                 onClick={() => deleteTool(tool._id)}
                 style={{
                   marginTop: '10px',
@@ -220,7 +368,7 @@ function App() {
                 }}
               >
                 🗑️ Remove Tool
-              </button>
+              </button>)}
 
             </div>
           </div>
